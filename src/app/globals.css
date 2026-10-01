@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: google;
+  src: url(/inter.ttf);
+}
+@font-face {
+  font-family: custom-serif;
+ 
+  src: url(/libre.ttf);
+}
+.custom-serif{
+  font-family: custom-serif;
+}
+@layer base {
+  html { scroll-behavior: smooth;
+  font-family: google;
+  }
+
+
+  body {
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3 { @apply custom-serif font-semibold; line-height: 1.2; }
+
+  
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+      animation-duration: .001ms !important;
+      transition-duration: .001ms !important;
+    }
+  }
+}
