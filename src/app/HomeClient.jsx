@@ -1131,6 +1131,7 @@ const iconFor = (l) => socialIcons[l.icon] || socialIcons[l.label?.toLowerCase()
 /* =====================================================================
    WebGL — champ de courbes de niveau (relief de parcelle)
    Version STATIQUE : pas d'interaction souris, pas d'animation temporelle.
+   CORRIGÉ pour mobile : résolution native + resize fiable.
    ===================================================================== */
 const VERT = `#version 300 es
 in vec2 p;
@@ -1172,8 +1173,8 @@ void main(){
   float h = fbm(q + vec2(t, -t * 0.6) + fbm(q * 0.8 - t) * 0.7);
 
   float d = distance(p, m);
-  h += 0.24 * exp(-d * d * 9.0);                        // relief soulevé
-  h += 0.035 * sin(d * 30.0 - uTime * 1.6) * exp(-d * 4.5); // ondulations
+  h += 0.24 * exp(-d * d * 9.0);
+  h += 0.035 * sin(d * 30.0 - uTime * 1.6) * exp(-d * 4.5);
 
   float x = h * uLevels;
   float g = abs(fract(x - 0.5) - 0.5) / fwidth(x);
@@ -1203,11 +1204,18 @@ function ContourCanvas({
   className = '',
 }) {
   const ref = useRef(null);
+  const containerRef = useRef(null);
 
   useEffect(() => {
     const canvas = ref.current;
-    if (!canvas) return;
-    const gl = canvas.getContext('webgl2', { alpha: true, premultipliedAlpha: true, antialias: false });
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const gl = canvas.getContext('webgl2', {
+      alpha: true,
+      premultipliedAlpha: true,
+      antialias: false,
+    });
     if (!gl) return;
 
     const compile = (type, src) => {
@@ -1249,7 +1257,7 @@ function ContourCanvas({
     gl.uniform1f(u('uLevels'), levels);
     gl.uniform1f(u('uEdge'), edge);
 
-    // Version statique : temps figé et souris fixe (centre)
+    // Version statique : temps figé et souris fixe
     gl.uniform1f(uTime, 12.0);
     gl.uniform2f(uMouse, 0.72, 0.52);
 
@@ -1261,29 +1269,53 @@ function ContourCanvas({
     };
 
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-      const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
-      const h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+      // CORRECTION : DPR réel (max 2 pour la performance)
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      // CORRECTION : dimensions basées sur le conteneur parent
+      const rect = container.getBoundingClientRect();
+      const w = Math.max(1, Math.floor(rect.width * dpr));
+      const h = Math.max(1, Math.floor(rect.height * dpr));
+
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w;
         canvas.height = h;
         gl.viewport(0, 0, w, h);
+        draw();
       }
-      draw();
     };
 
+    // CORRECTION : observer le conteneur parent
     const ro = new ResizeObserver(resize);
-    ro.observe(canvas);
-    resize(); // rendu initial
+    ro.observe(container);
+
+    // CORRECTION : gérer les changements d'orientation / barre d'adresse mobile
+    window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', resize);
+
+    // CORRECTION : petit délai pour laisser le layout se stabiliser
+    const timer = setTimeout(resize, 100);
+    resize();
 
     return () => {
       ro.disconnect();
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('orientationchange', resize);
+      clearTimeout(timer);
       gl.getExtension('WEBGL_lose_context')?.loseContext();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [line.join(), accent.join(), strength, levels, edge]);
 
-  return <canvas ref={ref} aria-hidden className={`pointer-events-none h-full w-full ${className}`} />;
+  return (
+    <div ref={containerRef} className="absolute inset-0 h-full w-full">
+      <canvas
+        ref={ref}
+        aria-hidden
+        className={`pointer-events-none block h-full w-full ${className}`}
+        style={{ display: 'block', width: '100%', height: '100%' }}
+      />
+    </div>
+  );
 }
 
 /* =====================================================================
@@ -1410,7 +1442,7 @@ function Portrait({ src, name }) {
 }
 
 /* =====================================================================
-   Barre de progression + jauge de profondeur (le site descend dans le sol)
+   Barre de progression + jauge de profondeur
    ===================================================================== */
 function ScrollUI() {
   const { scrollYProgress } = useScroll();
@@ -1477,7 +1509,7 @@ function Header({ site }) {
     >
       <div className={`${wrap} flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3`}>
         <a href="#" className="custom-serif text-[1.15rem] font-semibold leading-tight no-underline">
-          {site.name} 
+          {site.name}
         </a>
         <nav aria-label="Sections" className="flex flex-wrap gap-x-[22px] gap-y-[6px] text-[.92rem]">
           {site.nav.map((n) => {
@@ -1526,11 +1558,7 @@ function Section({ id, title, intro, children }) {
 }
 
 /* =====================================================================
-   MODIF — Carrousel infini, maintenant DRAGGABLE
-   Conserve : défilement automatique, ralentissement au survol,
-   accélération selon la vitesse du scroll, inversion de sens.
-   Ajoute : glisser à la souris / au doigt, avec inertie.
-   Au relâchement, le carrousel repart dans le sens du geste.
+   Carrousel infini DRAGGABLE
    ===================================================================== */
 function InfiniteCarousel({ images, base = 55, imgHeight = 300 }) {
   const rootRef = useRef(null);
@@ -1540,9 +1568,8 @@ function InfiniteCarousel({ images, base = 55, imgHeight = 300 }) {
   const dir = useRef(-1);
   const x = useMotionValue(0);
 
-  // état du drag
   const drag = useRef({ active: false, startX: 0, startVal: 0, lastX: 0, lastT: 0, vel: 0 });
-  const inertia = useRef(0); // px/s, décroît tout seul
+  const inertia = useRef(0);
   const [grabbing, setGrabbing] = useState(false);
 
   const { scrollY } = useScroll();
@@ -1576,7 +1603,6 @@ function InfiniteCarousel({ images, base = 55, imgHeight = 300 }) {
   useAnimationFrame((_, delta) => {
     const w = widthRef.current;
     if (!w) return;
-    // pendant le drag, c'est le doigt/la souris qui pilote
     if (drag.current.active) return;
 
     const dt = delta / 1000;
@@ -1587,9 +1613,8 @@ function InfiniteCarousel({ images, base = 55, imgHeight = 300 }) {
     let move = dir.current * base * dt * (hovering.current ? 0.2 : 1);
     move += move * Math.abs(vf);
 
-    // inertie issue du dernier geste (amortie)
     move += inertia.current * dt;
-    inertia.current *= Math.pow(0.02, dt); // ~ s'éteint en 1 seconde
+    inertia.current *= Math.pow(0.02, dt);
 
     x.set(wrapX(x.get() + move));
   });
@@ -1613,7 +1638,6 @@ function InfiniteCarousel({ images, base = 55, imgHeight = 300 }) {
     if (!d.active) return;
     const now = performance.now();
     const dtm = Math.max(1, now - d.lastT);
-    // vitesse lissée (px/s)
     const inst = ((e.clientX - d.lastX) / dtm) * 1000;
     d.vel = d.vel * 0.7 + inst * 0.3;
     d.lastX = e.clientX;
@@ -1627,7 +1651,6 @@ function InfiniteCarousel({ images, base = 55, imgHeight = 300 }) {
     d.active = false;
     setGrabbing(false);
     e.currentTarget.releasePointerCapture?.(e.pointerId);
-    // le carrousel repart dans le sens du geste, avec l'élan
     if (Math.abs(d.vel) > 20) dir.current = d.vel > 0 ? 1 : -1;
     inertia.current = Math.max(-3000, Math.min(3000, d.vel));
   };
@@ -1670,7 +1693,7 @@ function InfiniteCarousel({ images, base = 55, imgHeight = 300 }) {
 }
 
 /* =====================================================================
-   Domaines : horizons de sol, un seul ouvert à la fois
+   Domaines : horizons de sol
    ===================================================================== */
 const horizonColors = [
   'bg-[#3a2a1d] text-[#f3ece2]',
@@ -1735,9 +1758,8 @@ function Horizons({ items }) {
   );
 }
 
-
 /* =====================================================================
-   Parcours : design en cartes + ligne verte qui se remplit au scroll
+   Parcours : cartes + ligne verte qui se remplit au scroll
    ===================================================================== */
 function Timeline({ items }) {
   const ref = useRef(null);
@@ -1747,14 +1769,11 @@ function Timeline({ items }) {
 
   return (
     <div ref={ref} className="relative pl-10 max-md:pl-8">
-      {/* Rail : ligne grise de fond */}
       <div className="absolute bottom-2 left-[7px] top-2 w-[2px] bg-gray-300 max-md:left-[5px]">
-        {/* Ligne verte qui se remplit au scroll */}
         <motion.div
           className="absolute left-0 top-0 w-full origin-top bg-green-600"
           style={{ height }}
         />
-        {/* Pointe lumineuse */}
         <motion.div
           aria-hidden
           className="absolute left-1/2 z-10 h-[10px] w-[10px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-green-600 shadow-[0_0_0_4px_rgba(19,48,32,.15)]"
@@ -1772,13 +1791,11 @@ function Timeline({ items }) {
             viewport={{ once: true, margin: '-12% 0px' }}
             transition={{ duration: 0.8, ease }}
           >
-         
-
-            <p className="mb-3 inline--3 py-[px] custom-serif text-[.9rem] font-semibold leading-tight text-green-950">
+            <p className="mb-3 inline-block py-1 custom-serif text-[.9rem] font-semibold leading-tight text-green-950">
               {c.years}
             </p>
 
-            <div className=" bg-white px- py5 transition-shadow duration-500 hover max-md:px-">
+            <div className="bg-white py-5 transition-shadow duration-500 hover:shadow-md">
               <h3 className={h3Cls}>{c.role}</h3>
               <p className="mb-3 text-[.95rem] font-medium text-yellow-700">{c.org}</p>
               <p className="max-w-[64ch] text-gray-500">{c.text}</p>
@@ -1793,8 +1810,6 @@ function Timeline({ items }) {
                   ))}
                 </ul>
               )}
-
-              
             </div>
           </motion.li>
         ))}
@@ -1862,13 +1877,14 @@ export default function HomeClient({ site, articles, galleryImages = [] }) {
             <ContourCanvas />
           </div>
 
-          <div            className={`${wrap} grid min-h-[calc(100svh-57px)] items-center gap-16 py-16
+          <div
+            className={`${wrap} grid min-h-[calc(100svh-57px)] items-center gap-16 py-16
                         md:grid-cols-[1.25fr_.75fr] max-md:grid-cols-1 max-md:gap-9 max-md:py-10`}
           >
             <motion.div initial="hidden" animate="visible" variants={stagger}>
               <SplitTitle
                 text={site.name}
-                className="custom-serif text-[clamp(2rem,6vw,4rem)] font-semibold leading-tigh tacking-[-.015em]"
+                className="custom-serif text-[clamp(2rem,6vw,4rem)] font-semibold leading-tight tracking-[-.015em]"
               />
 
               <motion.p className="mb-6 mt-2 custom-serif text-[1.3rem] leading-tight text-green" variants={fadeUp}>
@@ -1889,18 +1905,16 @@ export default function HomeClient({ site, articles, galleryImages = [] }) {
                 </a>
               </motion.p>
 
-              {/* MODIF : bouton + « Me contacter » + réseaux sociaux sur UNE seule ligne
-                  (elle passe à la ligne seulement si l'écran est trop étroit) */}
               <motion.div className="mt-7 flex flex-wrap items-center gap-x-6 gap-y-4" variants={fadeUp}>
                 <a
                   href="#contact"
-                  className="underlin decoration-god decoration-2 underline-offset-[5px] transition-[text-underline-offset] hover:underline-offset-[9px]"
+                  className="underline decoration-gold decoration-2 underline-offset-[5px] transition-[text-underline-offset] hover:underline-offset-[9px]"
                 >
                   Mes projets
                 </a>
                 <a
                   href="#contact"
-                  className="underline decoration-god decoration-2 underline-offset-[5px] transition-[text-underline-offset] hover:underline-offset-[9px]"
+                  className="underline decoration-gold decoration-2 underline-offset-[5px] transition-[text-underline-offset] hover:underline-offset-[9px]"
                 >
                   Me contacter →
                 </a>
@@ -1933,21 +1947,19 @@ export default function HomeClient({ site, articles, galleryImages = [] }) {
           </div>
         </section>
 
-        
-                {/* ---------- Carrousel ---------- */}
-        <div className='px-'>
-          <h1 className='text-green-800 text-4xl'>
+        {/* ---------- Carrousel ---------- */}
+        <div className="px-6">
+          <h1 className="text-green-800 text-4xl">
             Gallerie de projets
           </h1>
-        <InfiniteCarousel images={gallery} />
-         <a
-                  href="/projets"
-                  className="underline decoration-god decoration-2 underline-offset-[5px] transition-[text-underline-offset] hover:underline-offset-[9px]"
-                >
-                  Voir tous les images  →
-                </a>
+          <InfiniteCarousel images={gallery} />
+          <a
+            href="/projets"
+            className="underline decoration-gold decoration-2 underline-offset-[5px] transition-[text-underline-offset] hover:underline-offset-[9px]"
+          >
+            Voir tous les images →
+          </a>
         </div>
-       
 
         {/* ---------- Domaines ---------- */}
         <Section
