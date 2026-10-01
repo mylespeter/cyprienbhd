@@ -1133,19 +1133,23 @@ const iconFor = (l) => socialIcons[l.icon] || socialIcons[l.label?.toLowerCase()
    Les lignes dérivent lentement, le curseur soulève le terrain
    et fait apparaître des ondulations dorées.
 
-   CORRECTIONS MOBILE :
-   1. smoothstep(1.0, 0.6, x) avait edge0 > edge1 : comportement INDÉFINI
-      en GLSL (OK sur desktop, corrompu sur beaucoup de GPU mobiles).
-   2. fwidth() pouvait valoir 0 -> division par zéro -> NaN -> blocs/artefacts.
-   3. Le motif dépendait de la HAUTEUR du canvas : sur mobile le hero est très
-      haut, donc le relief était étiré et flou. Tout est maintenant calculé
-      en pixels CSS (échelle constante quel que soit l'écran).
-   4. DPR plafonné à 1.5 -> rendu flou sur téléphone. Maintenant jusqu'à 2,
-      avec un budget de pixels maximum, et épaisseur des lignes en px CSS.
-   5. Moins d'octaves de bruit + 30 fps + GPU « low-power » sur mobile.
-   6. Sans souris, le halo doré dérive tout seul sur mobile.
-   7. Gestion de la perte de contexte WebGL (fréquente sur mobile) et
-      plus de loseContext() au démontage (cassait le mode strict de React).
+   CORRECTIONS MOBILE (v2) :
+   1. FLOU : le canvas était rendu à 2x max alors que les téléphones sont à 3x,
+      puis étiré par le navigateur. Maintenant jusqu'à 3x sur mobile (avec un
+      budget de pixels), et la taille CSS exacte (fractionnaire) est utilisée
+      pour que le bitmap tombe pile sur les pixels de l'écran.
+   2. FLOU (bis) : les lignes avaient un bord doux de 1,3 px CSS. Elles sont
+      maintenant dessinées avec un anti-aliasing d'exactement 1 pixel
+      appareil -> traits nets sur écran haute densité.
+   3. COUPÉ / MAL FORMATÉ : sur téléphone, l'échelle du relief (520 px mini)
+      était plus large que l'écran (390 px) : seules quelques grosses courbes
+      coupées par les bords étaient visibles. L'échelle suit maintenant la
+      largeur de l'écran sous 768 px. Sur ordinateur : strictement inchangé.
+   4. Garde-fou : quand les lignes se resserrent trop (pente raide), elles
+      s'estompent au lieu de former une bouillie grise.
+   5. Qualité adaptative : si le téléphone tombe sous ~20 fps, la résolution
+      baisse automatiquement par paliers.
+   6. Gestion de la perte de contexte WebGL (fréquente sur mobile).
    ===================================================================== */
 const VERT = `#version 300 es
 in vec2 p;
@@ -1194,17 +1198,23 @@ void main(){
   h += 0.035 * sin(d * 30.0 - uTime * 1.6) * exp(-d * 4.5);  // ondulations
 
   float x = h * uLevels;
-  float w = max(fwidth(x), 1e-4);            // évite la division par zéro (NaN)
+  float w = max(fwidth(x), 1e-4);            // niveaux par pixel appareil (jamais 0 -> pas de NaN)
 
-  // distances aux lignes exprimées en px CSS -> épaisseur identique partout
-  float g = abs(fract(x - 0.5) - 0.5) / w / uDpr;
-  float line = 1.0 - smoothstep(0.0, 1.3, g);
+  // distance à la ligne la plus proche, en PIXELS APPAREIL
+  float g = abs(fract(x - 0.5) - 0.5) / w;
+  // demi-épaisseur en px CSS convertie en px appareil + bord anti-aliasé de 1 px appareil
+  float hw = 0.65 * uDpr;
+  float line = 1.0 - smoothstep(hw - 0.5, hw + 0.5, g);
 
-  float g2 = abs(fract(x / 5.0 - 0.5) - 0.5) / (w / 5.0) / uDpr;
-  float idx = 1.0 - smoothstep(0.0, 2.2, g2);
+  float g2 = abs(fract(x / 5.0 - 0.5) - 0.5) / (w / 5.0);
+  float hw2 = 1.1 * uDpr;
+  float idx = 1.0 - smoothstep(hw2 - 0.5, hw2 + 0.5, g2);
+
+  // lignes trop serrées (pente raide) : on les estompe plutôt que d'afficher une bouillie
+  float dens = 1.0 - smoothstep(0.25, 0.55, w * uDpr);
 
   float near = exp(-d * d * 6.0);
-  float a = (line * 0.30 + idx * 0.50) * uStrength;
+  float a = (line * 0.30 + idx * 0.50) * uStrength * dens;
   a *= 1.0 + near * 1.3;
 
   // fondu aux bords sur une distance en px CSS (edge0 < edge1 : valide partout)
@@ -1234,9 +1244,9 @@ function createContour(canvas, { line, accent, strength, levels, edge }) {
   const small = window.innerWidth < 768;
   const lite = coarse || small;
   const octaves = lite ? 4 : 5;
-  const maxDpr = 2;
-  const maxPixels = lite ? 2.2e6 : 3.5e6;
-  const minFrameMs = coarse ? 1000 / 30 : 0;
+  const maxDpr = lite ? 3 : 2;              // les téléphones sont à 3x : on ne plafonne plus à 2
+  const maxPixels = lite ? 3.2e6 : 3.5e6;   // budget de pixels (hero mobile = très haut)
+  const minFrameMs = coarse ? 1000 / 30 - 2 : 0;
 
   const compile = (type, src) => {
     const s = gl.createShader(type);
@@ -1290,6 +1300,12 @@ function createContour(canvas, { line, accent, strength, levels, edge }) {
   let raf = 0;
   let running = false;
 
+  // qualité adaptative : multiplicateur de résolution (1 = pleine)
+  let quality = 1;
+  let prevDraw = 0;
+  let accMs = 0;
+  let accN = 0;
+
   const draw = (now = performance.now()) => {
     const dt = Math.max(0, Math.min(64, now - lastDraw));
     lastDraw = now;
@@ -1313,32 +1329,19 @@ function createContour(canvas, { line, accent, strength, levels, edge }) {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   };
 
-  const frame = (now) => {
-    if (!running) return;
-    raf = requestAnimationFrame(frame);
-    if (now - lastFrame < minFrameMs) return;
-    lastFrame = now;
-    draw(now);
-  };
-  const start = () => {
-    if (running || reduce) return;
-    running = true;
-    raf = requestAnimationFrame(frame);
-  };
-  const stop = () => {
-    running = false;
-    cancelAnimationFrame(raf);
-  };
-
   const resize = () => {
-    const cssW = canvas.clientWidth;
-    const cssH = canvas.clientHeight;
-    if (!cssW || !cssH) return;
+    // taille CSS EXACTE (fractionnaire) : évite le rééchantillonnage flou
+    const rect = canvas.getBoundingClientRect();
+    const cssW = rect.width;
+    const cssH = rect.height;
+    if (cssW < 1 || cssH < 1) return;
 
-    let dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
+    let dpr = Math.min(window.devicePixelRatio || 1, maxDpr) * quality;
     if (cssW * cssH * dpr * dpr > maxPixels) {
-      dpr = Math.max(1, Math.sqrt(maxPixels / (cssW * cssH)));
+      dpr = Math.sqrt(maxPixels / (cssW * cssH));
     }
+    dpr = Math.max(0.75, dpr);
+
     const w = Math.max(1, Math.round(cssW * dpr));
     const h = Math.max(1, Math.round(cssH * dpr));
     if (canvas.width !== w || canvas.height !== h) {
@@ -1347,14 +1350,62 @@ function createContour(canvas, { line, accent, strength, levels, edge }) {
       gl.viewport(0, 0, w, h);
     }
     gl.uniform1f(uDpr, w / cssW);
-    // échelle du relief en px CSS : constante, indépendante de la hauteur du hero
-    gl.uniform1f(uScale, Math.max(520, Math.min(900, Math.min(cssW, cssH))));
+
+    // Échelle du relief en px CSS.
+    // Ordinateur : formule d'origine (inchangée).
+    // Petit écran : suit la largeur, sinon le motif est plus large que l'écran.
+    const base = Math.max(520, Math.min(900, Math.min(cssW, cssH)));
+    const scale = cssW < 768 ? Math.max(340, Math.min(base, cssW * 0.9)) : base;
+    gl.uniform1f(uScale, scale);
     draw();
   };
+
+  const frame = (now) => {
+    if (!running) return;
+    raf = requestAnimationFrame(frame);
+    if (now - lastFrame < minFrameMs) return;
+    lastFrame = now;
+
+    // mesure de la fluidité : si < ~20 fps, on baisse la résolution
+    if (prevDraw) {
+      const d = now - prevDraw;
+      if (d < 250) {
+        accMs += d;
+        accN += 1;
+      }
+      if (accN >= 40) {
+        const avg = accMs / accN;
+        accMs = 0;
+        accN = 0;
+        if (avg > 50 && quality > 0.6) {
+          quality *= 0.8;
+          resize();
+        }
+      }
+    }
+    prevDraw = now;
+    draw(now);
+  };
+  const start = () => {
+    if (running || reduce) return;
+    running = true;
+    prevDraw = 0;
+    accMs = 0;
+    accN = 0;
+    lastFrame = 0;
+    raf = requestAnimationFrame(frame);
+  };
+  const stop = () => {
+    running = false;
+    cancelAnimationFrame(raf);
+  };
+
   const ro = new ResizeObserver(resize);
   ro.observe(canvas);
 
-  const io = new IntersectionObserver(([e]) => (e.isIntersecting ? start() : stop()));
+  const io = new IntersectionObserver(([e]) => (e.isIntersecting ? start() : stop()), {
+    rootMargin: '120px',
+  });
   io.observe(canvas);
 
   const onMove = (e) => {
