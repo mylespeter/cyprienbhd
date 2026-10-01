@@ -1,6 +1,6 @@
 import { getAllArticles } from '../lib/articles';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://cyprienbhd.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://cyprienbhd.vercel.app';
 
 export default function sitemap() {
   const articles = getAllArticles().map((a) => ({

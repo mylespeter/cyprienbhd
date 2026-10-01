@@ -20,7 +20,7 @@ import { site } from '../data/site';
 import { getAllArticles, formatDate } from '../lib/articles';
 import HomeClient from './HomeClient';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://cyprienbhd.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://cyprienbhd.vercel.app';
 
 /* ---------- FAQ dédiée AEO (réponses directes pour assistants IA) ---------- */
 const faq = [

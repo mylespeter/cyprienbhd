@@ -27,7 +27,7 @@ import { site } from '../data/site';
 const serif = Bitter({ subsets: ['latin'], variable: '--serif', display: 'swap' });
 const sans = Public_Sans({ subsets: ['latin'], variable: '--sans', display: 'swap' });
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://cyprienbhd.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://cyprienbhd.vercel.app';
 
 export const metadata = {
   metadataBase: new URL(SITE_URL),
