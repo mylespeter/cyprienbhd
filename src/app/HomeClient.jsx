@@ -4126,11 +4126,11 @@ function Timeline({ items }) {
           className="absolute left-0 top-0 w-full origin-top bg-green-600"
           style={{ height }}
         />
-        <motion.div
+        {/* <motion.div
           aria-hidden
           className="absolute left-1/2 z-10 h-[10px] w-[10px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-green-600 shadow-[0_0_0_4px_rgba(19,48,32,.15)]"
           style={{ top: height }}
-        />
+        /> */}
       </div>
 
       <ul className="grid gap-12">
@@ -4143,16 +4143,16 @@ function Timeline({ items }) {
             viewport={{ once: true, margin: '-12% 0px' }}
             transition={{ duration: 0.8, ease }}
           >
-            <p className="mb-3 inline--3 py-[px] custom-serif text-[.9rem] font-semibold leading-tight text-green-950">
+            <p className="mb-3 inline--3 py-[px] custom-seri text-[.9rem] font-semibold leading-tight text-green-950">
               {c.years}
             </p>
 
             <div className=" bg-white px- py5 transition-shadow duration-500 hover max-md:px-">
               <h3 className={h3Cls}>{c.role}</h3>
-              <p className="mb-3 text-[.95rem] font-medium text-yellow-700">{c.org}</p>
+              <p className="mb-3 text-[.95rem] font-medium text-green-900">{c.org}</p>
               <p className="max-w-[64ch] text-gray-500">{c.text}</p>
 
-              {c.points?.length > 0 && (
+              {/* {c.points?.length > 0 && (
                 <ul className="mt-4 grid gap-2">
                   {c.points.map((pt) => (
                     <li key={pt} className="flex gap-3 text-[.95rem]">
@@ -4161,7 +4161,7 @@ function Timeline({ items }) {
                     </li>
                   ))}
                 </ul>
-              )}
+              )} */}
             </div>
           </motion.li>
         ))}
@@ -4301,16 +4301,11 @@ export default function HomeClient({ site, articles, galleryImages = [] }) {
 
         {/* ---------- Carrousel ---------- */}
         <div className='px-'>
-          <h1 className='text-green-800 text-4xl'>
+          <h1 className='text-green-800 px-4 text-4xl'>
             Gallerie de projets
           </h1>
           <InfiniteCarousel images={gallery} />
-          <a
-            href="/projets"
-            className="underline decoration-god decoration-2 underline-offset-[5px] transition-[text-underline-offset] hover:underline-offset-[9px]"
-          >
-            Voir tous les images  →
-          </a>
+       
         </div>
 
         {/* ---------- Domaines ---------- */}
